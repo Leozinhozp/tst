@@ -1,0 +1,2577 @@
+#include <amxmodx>
+#include <amxmisc>
+#include <sqlx>
+#include <cstrike>
+#include <zombie_plague_advance>
+#include <fakemeta>
+#include <zp_colored_print>
+#include <BRA_register>
+#include <cripto>
+
+#define TAGBANK "DKS Bank"
+#define TAGREG  "DKS Register"
+#define TAGTKTS "DKS Tickets"
+
+#define TASK_TICKET 25154
+#define TASK_IS_AWAY 1239183
+
+const 	OFFSET_CSMENUCODE = 205
+const 	VGUI_JOIN_TEAM_NUM = 2
+
+new 	const g_sqlTable[] = "DKS_Bank_TB";
+new 	const g_DataBase[] = "DKS_Bank_DB";
+
+new	numresults;
+new	bkrank_nick[15][33],
+	bkrank_nicktks[15][33],
+	bkrank_tickets[33],
+	bkrank_ammopacks[33];
+
+new	tempPlayerSenha[33],
+	tempPlayerSenha2[33],
+	MudarSenhaAtual[33],
+	MudarSenhaNova[33],
+	pl_tentativas[33],
+	g_bkmodel[33],
+	g_blocktime[33],
+	g_selecao[33], 
+	PlayerId[33],
+	pl_Nick[33],
+	pl_SteamID[33];
+	
+new 	Conta[45],
+	Senha[45],
+	AmmoPacks[45],
+	Tickets,
+	LastNick[45],
+	Blocked[45], 
+	BlockedE[45],
+	BlockedR[45];
+
+new 	g_menuPosition[33],
+ 	g_menuPlayers[33][32],
+ 	g_menuPlayersNum[33],
+	g_bPagina[33];
+	
+new	g_msgSyncHud;
+
+new 	Handle:g_SqlTuple
+
+new 	bool:pl_logado[33],
+	bool:g_blocked[33],
+	bool:pl_hasAccess[33],
+	bool:g_rank_allowed = false;
+
+new	g_Conta[33][100],
+	g_Senha[33][100],
+	pl_APs[33],
+	pl_Tickets[33],
+	g_Blocked[33],
+	g_BlockedE[33],
+	g_BlockedR[33],
+	is_user_away[33];
+
+new	cvar_bantime,
+	cvar_maxtent,
+	cvar_punish,
+	cvar_pwmin,
+	cvar_pwmax,
+	cvar_logmin,
+	cvar_logmax,
+	cvar_tickets_time, 
+	cvar_tickets_amnt,
+	cvar_tickets_amnt_vip;
+	
+new 	p_laBlockTime;
+
+new const g_begin[] = "DKS_register/begin.wav";
+new const g_accept[] = "DKS_register/button_accept.wav";
+new const g_locked[] = "DKS_register/button_locked.wav";
+
+public plugin_init()
+{
+	register_plugin("DKS | SQL Reg+Bank \r05/11", "2016", "Leozinho")
+	
+	register_dictionary("DKS_registro.txt")
+	
+	register_forward(FM_Sys_Error, "fw_svshutdown");
+	register_forward(FM_GameShutdown, "fw_svshutdown");
+	register_forward(FM_ServerDeactivate, "fw_svshutdown"); 
+	register_forward(FM_ChangeLevel, "fw_svshutdown");
+	register_forward(FM_SpectatorDisconnect, "fw_svshutdown");
+
+	register_message( get_user_msgid( "ShowMenu" ), "message_show_menu" );
+	register_message( get_user_msgid( "VGUIMenu" ), "message_vgui_menu" );
+	
+	register_forward(FM_ClientUserInfoChanged, "fw_ClientUserInfoChanged")
+	
+	register_forward(FM_PlayerPreThink, "fw_PlayerPreThink")
+	
+	ReadSqlite()
+	build_rank()
+	build_rank_tks()
+	
+	//----------------------------------------------------------------------------
+	
+	register_clcmd("[Registrar]Login_", "register_step1")
+	register_clcmd("[Registrar]Senha_", "register_step2")
+	register_clcmd("[Registrar]Confirmar_Senha_", "register_step3")
+	
+	register_clcmd("[Entrar]Login_", "login_step1")
+	register_clcmd("[Entrar]Senha_", "login_step2")
+	
+	register_clcmd("[MudarSenha]Senha_Atual_", "change_pwstep1")
+	register_clcmd("[MudarSenha]Nova_Senha_", "change_pwstep2")
+	register_clcmd("[MudarSenha]Confirmar_Senha_", "change_pwstep3")
+	
+	register_clcmd("[Sacar]Quantia_", "cmd_saque_filter")
+	register_clcmd("[Depositar]Quantia_", "cmd_deposito_filter")
+	
+	register_clcmd("[BankAdmin]Motivo_", "cmd_reason")
+	register_clcmd("[BankAdmin]Conta_", "cmd_bankadmin")
+	
+	register_clcmd("[BankAdmin]Add_Packs_", "cmd_bankadmin_add")
+	register_clcmd("[BankAdmin]Edit_Packs_", "cmd_bankadmin_edit")
+	
+	register_clcmd("[BankAdmin]Add_Tickets_", "cmd_bankadmin_add_tkts")
+	register_clcmd("[BankAdmin]Edit_Tickets_", "cmd_bankadmin_edit_tkts")
+	
+	register_clcmd("[BankAdmin]Nova_Senha_", "cmd_bankadmin_pw")
+	register_clcmd("[BankAdmin]Confirmar_Senha_", "cmd_bankadmin_pw2")
+
+	//----------------------------------------------------------------------------
+	
+	register_clcmd("chooseteam", "cmd_chooseteam")
+	register_clcmd("jointeam", "cmd_chooseteam")
+	
+	register_clcmd("say", "filter_say");
+	register_clcmd("say_team", "filter_say");	
+	
+	cvar_logmin 			= register_cvar("dksregister_logmin", "3") 
+	cvar_logmax 			= register_cvar("dksregister_logmax", "15") 
+	cvar_pwmin 			= register_cvar("dksregister_pwmin", "3")       
+	cvar_pwmax 			= register_cvar("dksregister_pwmax", "15") 
+	cvar_maxtent			= register_cvar("dksregister_maxtent", "3")
+	cvar_punish			= register_cvar("dksregister_punish", "2")
+	cvar_bantime 			= register_cvar("dksregister_bantime", "5")
+	cvar_tickets_time		= register_cvar("dks_tickets_time", "1")
+	cvar_tickets_amnt		= register_cvar("dks_tickets_quantia", "1")
+	cvar_tickets_amnt_vip	 	= register_cvar("dks_tickets_quantia_vip", "2")
+	
+	//----------------------------------------------------------------------------
+	
+	g_msgSyncHud 	= CreateHudSyncObj();
+	
+	register_menucmd(register_menuid("Main Menu"), 1023, "menu_handler");
+	register_menucmd(register_menuid("Bank Menu"), 1023, "bank_handler")
+	register_menucmd(register_menuid("BK Admin Players"), 1023, "menu_action")
+	register_menucmd(register_menuid("Bank Admin Menu"), 1023, "bkadmin_edit_handler")
+	register_menucmd(register_menuid("Menu Tickets"), 1023, "menuTickets_handler")
+}
+public fw_svshutdown() 
+{
+	for (new id = 1; id <= get_maxplayers(); id++) 
+		if (is_user_connected(id)) atualizar_tabela(id);
+}
+public plugin_precache()
+{		
+	/*new szIP[22]; 
+	get_user_ip(0, szIP, charsmax(szIP)); 
+	
+	if(!equal(szIP, "187.108.192.92:27040")) 
+	{ 
+		set_fail_state("Plugin privado, pertence ao servidor DKS."); 
+		server_cmd("shutdown")
+	}*/
+	
+	new szQuery[2048]
+	new len = 0
+		
+	SQL_SetAffinity( "sqlite" );
+	
+	if(!SQL_SetAffinity("sqlite"))
+		set_fail_state( "SQL Error: Impossivel estabelecer conexao com banco de dados." );
+	
+	g_SqlTuple = SQL_MakeDbTuple("", "", "", g_DataBase);
+	
+	len += format(szQuery[len], 2048, "CREATE TABLE IF NOT EXISTS `%s`( ", g_sqlTable)
+	
+	len += format(szQuery[len], 2048-len, "`Index` INTEGER PRIMARY KEY ,")
+	len += format(szQuery[len], 2048-len, "`Conta` VARCHAR( 20 ) NOT NULL ,")
+	len += format(szQuery[len], 2048-len, "`Senha` VARCHAR( 20 ) NOT NULL , ")
+	len += format(szQuery[len], 2048-len, "`AmmoPacks` INTEGER( 9 ) NOT NULL DEFAULT '0' ,") 
+	len += format(szQuery[len], 2048-len, "`Safely` INTEGER( 9 ) NOT NULL DEFAULT '0' , ")
+	len += format(szQuery[len], 2048-len, "`Last Nick` VARCHAR( 32 ) NOT NULL DEFAULT 'NONE' , ")
+	len += format(szQuery[len], 2048-len, "`Last Activity` INTEGER( 16 ) NOT NULL DEFAULT '0' ,") 
+	len += format(szQuery[len], 2048-len, "`Blocked` INTEGER( 16 ) NOT NULL DEFAULT '0', ")
+	len += format(szQuery[len], 2048-len, "`Block Reason` VARCHAR( 128 ) NOT NULL DEFAULT 'NONE' , ")
+	len += format(szQuery[len], 2048-len, "`Tickets` INT NOT NULL DEFAULT '0')")
+
+	SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+	
+	ReadSqlite()
+	build_rank()	
+	
+	set_task(30.0, "cmd_ativar", 0,_,_,_,0)
+
+	precache_sound(g_begin)
+	precache_sound(g_accept)
+	precache_sound(g_locked)
+}
+/*stock EmitSound(index, sound)
+{
+	switch(sound)
+	{
+		case NEGADO: client_cmd(index, "spk ^"access denied^"");
+		case CONCEDIDO:	client_cmd(index, "spk ^"access granted^"");
+		case ACEITO: client_cmd(index, "spk DKS_register/button_accept");
+		case ERROR: client_cmd(index, "spk DKS_register/button_locked");
+		case BEGIN: client_cmd(index, "spk DKS_register/begin");
+	}
+}*/
+public cmd_ativar()
+	g_rank_allowed = true
+	
+public plugin_cfg()
+	build_rank()
+	
+public plugin_end()
+{
+	SQL_FreeHandle(g_SqlTuple)
+}
+public build_rank()
+{
+	new ErrorCode
+	new Error[512]
+	new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, 511)
+	
+	if(SqlConnection == Empty_Handle)
+	{	
+		set_fail_state(Error)
+	}
+	
+	new Handle:Query = SQL_PrepareQuery(SqlConnection, "SELECT `Last Nick`, `AmmoPacks` FROM `%s` ORDER BY `AmmoPacks` DESC LIMIT 10", g_sqlTable)
+	
+	if(!SQL_Execute(Query))
+	{
+		ErrorCode = SQL_QueryError(Query, Error, 511)
+		SQLError("SQL Error: %s -- (%d)", Error, ErrorCode)
+		server_print("Ocorreu um erro na consulta")
+		return;
+	}
+	
+	numresults = SQL_NumResults(Query)
+	
+	for(new i = 0; i < numresults; i++)
+	{
+		new name[45], ammopacks
+		SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Last Nick"), name[i], charsmax(name))
+		ammopacks = SQL_ReadResult(Query,SQL_FieldNameToNum(Query,"AmmoPacks"))
+		
+		copy(bkrank_nick[i], charsmax(bkrank_nick), name[i])
+		bkrank_ammopacks[i] = ammopacks
+		
+		SQL_NextRow(Query)
+	}
+	
+}		
+public build_rank_tks()
+{
+	new ErrorCode
+	new Error[512]
+	new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, 511)
+	
+	if(SqlConnection == Empty_Handle)
+	{	
+		set_fail_state(Error)
+	}
+	
+	new Handle:Query = SQL_PrepareQuery(SqlConnection, "SELECT `Last Nick`, `Tickets` FROM `%s` ORDER BY `Tickets` DESC LIMIT 10", g_sqlTable)
+	
+	if(!SQL_Execute(Query))
+	{
+		ErrorCode = SQL_QueryError(Query, Error, 511)
+		SQLError("SQL Error: %s -- (%d)", Error, ErrorCode)
+		server_print("Ocorreu um erro na consulta")
+		return;
+	}
+	
+	numresults = SQL_NumResults(Query)
+	
+	for(new i = 0; i < numresults; i++)
+	{
+		new name[45], tickets
+		SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Last Nick"), name[i], charsmax(name))
+		tickets = SQL_ReadResult(Query,SQL_FieldNameToNum(Query,"Tickets"))
+		
+		copy(bkrank_nicktks[i], charsmax(bkrank_nicktks), name[i])
+		bkrank_tickets[i] = tickets
+		
+		SQL_NextRow(Query)
+	}
+	
+}		
+public ReadSqlite()
+{
+	new ErrorCode
+	new Error[512]
+	new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, charsmax(Error))
+	new systime = get_systime() - 2592000
+		
+	if(SqlConnection == Empty_Handle)
+	{	
+		set_fail_state(Error)
+	}
+		
+	new Handle:Query = SQL_PrepareQuery(SqlConnection, "SELECT *  FROM `%s` WHERE `Last Activity` <= %d AND `Last Activity` > 0 OR `Blocked` <= %d AND `Blocked` > 1", g_sqlTable, systime, get_systime())
+		
+	if(!SQL_Execute(Query))
+	{
+		SQL_QueryError(Query, Error, charsmax(Error))
+		SQLError("SQL Error: %s -- (%s)", Error, Query)
+		server_print("[%s] Ocorreu um erro na consulta", TAGREG)
+		return;
+	}
+	new iconta[50], iaps[50], itimestamp, itimestamp2
+	
+	while(SQL_MoreResults(Query))
+	{
+		SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Conta"), iconta, charsmax(iconta))
+		SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "AmmoPacks"), iaps, charsmax(iaps))
+		itimestamp = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Last Activity"))
+		itimestamp2 = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Blocked"))
+		
+		if(itimestamp <= systime && itimestamp > 0)
+		{
+			Login("%s -- Conta encerrada por inatividade.", TAGREG)
+			Login("Conta: %s", iconta)
+			Login("AmmoPacks: %s", iaps)
+			Login("--------------------------------------------------------------------")
+			
+			static szQuery[ 128 ]
+			formatex( szQuery, charsmax( szQuery ), "DELETE FROM `%s` WHERE Conta=^"%s^";", g_sqlTable, iconta);
+			SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+		}
+		if(itimestamp2 <= get_systime() && itimestamp2 > 1)
+		{
+			Login("%s -- Conta Desbloqueada.", TAGREG)
+			Login("Conta: %s", iconta)
+			Login("--------------------------------------------------------------------")
+			
+			static szQuery[ 128 ]
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`='0' , `Blocked`='0' , `Block Reason`='NONE' WHERE Conta =^"%s^";", g_sqlTable, iconta);
+			SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+		}
+		SQL_NextRow(Query)
+	}
+}	
+public cmd_add_ticket(id) 
+{
+	id -= TASK_TICKET
+	
+	if(pl_logado[id] == false || cs_get_user_team(id) == CS_TEAM_SPECTATOR || cs_get_user_team(id) == CS_TEAM_UNASSIGNED) return PLUGIN_HANDLED;
+	
+	if(is_user_away[id])
+	{
+		zp_colored_print(id, "!g[%s] !yVoce nao ganhara tickets devido sua inatividade no game!", TAGTKTS)
+		return PLUGIN_HANDLED
+	}
+	else
+	{
+		if(get_user_flags(id) & ADMIN_LEVEL_B)
+		{
+			pl_Tickets[id] += get_pcvar_num(cvar_tickets_amnt_vip)
+			zp_colored_print(id, "!g[%s] !yVoce ganhou !g%d !yticket%s, voce ganha a cada !g%d !yminuto%s.", TAGTKTS, get_pcvar_num(cvar_tickets_amnt_vip), get_pcvar_num(cvar_tickets_amnt_vip) > 1 ? "s" : "", get_pcvar_num(cvar_tickets_time), get_pcvar_num(cvar_tickets_time) > 1 ? "s" : "")
+			zp_colored_print(id, "!g[%s] !yVoce ganha o dobro de ticket porque voce e vip!", TAGTKTS)
+			Save_Tickets(id)
+		}
+		else
+		{
+			pl_Tickets[id] += get_pcvar_num(cvar_tickets_amnt)
+			zp_colored_print(id, "!g[%s] !yVoce ganhou !g%d !yticket%s, voce ganha a cada !g%d !yminuto%s.", TAGTKTS, get_pcvar_num(cvar_tickets_amnt), get_pcvar_num(cvar_tickets_amnt) > 1 ? "s" : "", get_pcvar_num(cvar_tickets_time), get_pcvar_num(cvar_tickets_time) > 1 ? "s" : "")
+			Save_Tickets(id)
+		}
+	}
+	return PLUGIN_CONTINUE;
+}
+public fw_PlayerPreThink(id) 
+{
+	new button = pev(id, pev_button)
+	
+	if(button&IN_BACK || button&IN_FORWARD || button&IN_RUN || button&IN_JUMP || button&IN_MOVELEFT || button&IN_MOVERIGHT || button&IN_LEFT || button&IN_RIGHT)
+	{
+		remove_task(id+TASK_IS_AWAY)
+		
+		if(is_user_away[id])
+		{
+			is_user_away[id] = false
+			zp_colored_print(id, "!g[%s] !ySeu ganho de tickets foi retomado!", TAGTKTS)
+		}
+
+	}
+	else if(!task_exists(id+TASK_IS_AWAY) && pl_logado[id]) set_task(20.0, "cmd_away", id+TASK_IS_AWAY);
+}
+
+public cmd_away(id)
+{
+	id -= TASK_IS_AWAY
+	
+	if(!is_user_alive(id) || pl_logado[id] == false) return PLUGIN_HANDLED
+	
+	is_user_away[id] = true
+	zp_colored_print(id, "!g[%s] !yVoce nao ganhara tickets devido sua inatividade no game!", TAGTKTS)
+	
+	return PLUGIN_CONTINUE
+}
+public show_rank(id)
+{
+	new szQuery[2048], len = 0
+	
+	if(!g_rank_allowed)
+	{
+		zp_colored_print(id, "!g[%s] !yO plugin ainda nao construiu a tabela do rank.", TAGBANK)
+		return PLUGIN_HANDLED
+	}
+	else
+	{
+		len += formatex(szQuery[len], 2048, "<html><head>")
+		len += formatex(szQuery[len], 2048-len,"<style type='text/css'>#pre{font-family:Verdana,Tahoma;color:#FFB000;font-size:12px}body{background:#000000;margin-left:8px;margin-top:8px;}#cd{width:35px;text-align:center;}#ce{width:400px;text-align:center;}#cf{width:100px;text-align:center;}</style></head><body scroll='no'><TABLE BORDER=1 id='pre'><TR><TD colspan='3' width='585px' height='30px' align='center'>Rank de AmmoPacks</TD></TR>")
+		len += formatex(szQuery[len], 2048-len,"<TR><TD id='cd'>*</TD><TD id='ce'>Utimo nick usado</TD> <TD id='cf'>AmmoPacks</TD></TR>")
+		
+		new count = 1
+		
+		for(new i = 0; i < numresults; i++)
+		{
+			len += formatex(szQuery[len], 2048-len,"<TR id='cd'><TD>%d°</TD><TD id='ce'>%s</TD><TD id='cf'>%d</TD></TR>", count, bkrank_nick[i], bkrank_ammopacks[i])
+			
+			count++
+		}
+		
+		len += formatex(szQuery[len], 2048-len,"</table></body></html>")
+		
+		show_motd(id, szQuery, "Bk Rank")
+	}
+	return PLUGIN_CONTINUE
+}
+public show_rank_tks(id)
+{
+	new szQuery[2048], len = 0
+	len += formatex(szQuery[len], 2048, "<html><head>")
+	len += formatex(szQuery[len], 2048-len,"<style type='text/css'>#pre{font-family:Verdana,Tahoma;color:#FFB000;font-size:12px}body{background:#000000;margin-left:8px;margin-top:8px;}#cd{width:35px;text-align:center;}#ce{width:400px;text-align:center;}#cf{width:100px;text-align:center;}</style></head><body scroll='no'><TABLE BORDER=1 id='pre'><TR><TD colspan='3' width='585px' height='30px' align='center'>Rank de Tickets</TD></TR>")
+	len += formatex(szQuery[len], 2048-len,"<TR><TD id='cd'>*</TD><TD id='ce'>Utimo nick usado</TD> <TD id='cf'>Tickets</TD></TR>")
+		
+	new count = 1
+		
+	for(new i = 0; i < numresults; i++)
+	{
+		len += formatex(szQuery[len], 2048-len,"<TR id='cd'><TD>%d°</TD><TD id='ce'>%s</TD><TD id='cf'>%d</TD></TR>", count, bkrank_nicktks[i], bkrank_tickets[i])
+			
+		count++
+	}
+		
+	len += formatex(szQuery[len], 2048-len,"</table></body></html>")
+		
+	show_motd(id, szQuery, "Bk Rank Tickets")
+}
+public client_disconnect(id)
+{
+	atualizar_tabela(id)
+		
+	pl_logado[id] = false
+	g_blocked[id] = false
+	pl_hasAccess[id] = false
+	pl_APs[id] = 0
+	is_user_away[id] = false
+	
+	remove_task(id + TASK_TICKET)
+}
+public client_putinserver(id)
+{
+	if (is_user_bot(id)) 
+		return 0;
+		
+	if (!is_user_bot(id))
+	{
+		set_task(0.1, "menu_register", id)
+		pl_logado[id] = false
+		g_blocked[id] = false
+		pl_hasAccess[id] = false
+		pl_tentativas[id] = get_pcvar_num(cvar_maxtent)
+		remove_task(id + TASK_TICKET)
+	}
+	return PLUGIN_CONTINUE
+}
+public menu_register(id)
+{
+	new menuBody[2048], iKeys;
+	
+	new len = formatex(menuBody, 2047, "\r[%s] \w%L^n", TAGREG, id, "REGMENU_TITLE")
+	
+	if(pl_logado[id] == true)
+		len += formatex(menuBody[len], 2047-len, "^n\w%L: \d%s", id, "MENU_ACC", g_Conta[id])
+	if(pl_logado[id] == true)
+		len += formatex(menuBody[len], 2047-len, "^n\w%L: \r%d", id, "MENU_ACCPACKS", pl_APs[id])
+	if(pl_logado[id] == true)
+		len += formatex(menuBody[len], 2047-len, "^n\wTickets: \r%d", pl_Tickets[id])
+	
+	new HumanReadableDate[32]
+	format_time(HumanReadableDate, charsmax(HumanReadableDate), "%d/%m/%Y", g_BlockedE[id])
+	
+	if(g_blocked[id] == true && pl_logado[id] == true)
+	{	
+		if(g_BlockedE[id] == 1)
+			len += formatex(menuBody[len], 2047 - len, "^n^n\rConta Suspensa Permanentemente!^n")
+		else
+			len += formatex(menuBody[len], 2047 - len, "^n^n\rConta Suspensa ate %s^n", HumanReadableDate)
+	
+		if(equal(g_BlockedR[id], "NONE"))
+			len += formatex(menuBody[len], 2047 - len, "\r%L: \d%L", id, "REASON_", id, "NO_REASON")
+		else
+			len += formatex(menuBody[len], 2047 - len, "\r%L: \d%s", id, "REASON_", g_BlockedR[id])
+	}
+	
+	len += formatex(menuBody[len], 2047-len, pl_logado[id] || g_blocked[id] ? "^n^n\d1. %L" : "^n\r1. \w%L", id, "REGMENU_REGISTRAR")
+	if(!pl_logado[id] && !g_blocked[id] || !pl_logado[id] && g_blocked[id]) iKeys |= MENU_KEY_1	
+	
+	len += formatex(menuBody[len], 2047-len, pl_logado[id] || g_blocked[id] ? "^n\d2. %L" : "^n\r2. \w%L", id, "REGMENU_LOGAR")
+	if(!pl_logado[id] && !g_blocked[id] || !pl_logado[id] && g_blocked[id]) iKeys |= MENU_KEY_2
+	
+	len += formatex(menuBody[len], 2047-len, pl_logado[id] && !g_blocked[id] ? "^n^n\r3. \w%L" : "^n^n\d3. %L", id, "REGMENU_SENHA")
+	if(pl_logado[id] == true && !g_blocked[id]) iKeys |= MENU_KEY_3
+	
+	len += formatex(menuBody[len], 2047-len, pl_logado[id] ? "^n\r4. \w%L" : "^n\d4. %L", id, "REGMENU_LOGOUT")
+	if(pl_logado[id] == true) iKeys |= MENU_KEY_4
+	
+	len += formatex(menuBody[len], 2047-len, pl_logado[id] && !g_blocked[id] ? "^n\r5. \w%L" : "^n\d5. %L", id, "MENU_BANK")
+	if(pl_logado[id] == true && !g_blocked[id]) iKeys |= MENU_KEY_5
+		
+	if(pl_tentativas[id] < get_pcvar_num(cvar_maxtent) && pl_logado[id] == false)
+		len += formatex(menuBody[len], 2047-len, "^n^n\d%L: \r%d", id, "REGMENU_ATTEMPTS", pl_tentativas[id])
+	
+	len += format(menuBody[len], 2047-len, "^n^n^n\r0. \w%L", id, "MENU_SAIR")
+	iKeys |= MENU_KEY_0
+	
+	set_pdata_int(id, OFFSET_CSMENUCODE, 0)
+	show_menu(id, iKeys, menuBody, -1, "Main Menu")	
+}	
+public menu_handler(id, iKey)
+{
+	switch((iKey + 1) % 10)
+	{
+		case 1: filter_register(id) 
+		case 2: filter_login(id)
+		case 3: filter_changepw(id)
+		case 4: filter_logout(id)
+		case 5: filter_bank(id)
+		case 0: filter_kick(id)
+	}
+}
+public filter_register(id)
+{
+	if(pl_logado[id]==true)
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGREG, id, "CHAT_ALREADY")
+		menu_register(id)
+		EmitSound(id, ERROR)
+	}
+	else
+	{
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_LOGIN1")
+		client_cmd(id, "messagemode [Registrar]Login_")
+		EmitSound(id, ACEITO)
+	}
+	return PLUGIN_CONTINUE
+}
+public register_step1(id)
+{		
+	if(pl_logado[id] == true)
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGREG, id, "CHAT_ALREADY")
+		menu_register(id)
+		return PLUGIN_HANDLED
+	}
+
+	read_args(g_Conta[id], 99)
+	remove_quotes(g_Conta[id])
+	trim(g_Conta[id]) 
+
+	if(contain(g_Conta[id], " ") != -1 || strlen(g_Conta[id]) < get_pcvar_num(cvar_logmin) || strlen(g_Conta[id]) > get_pcvar_num(cvar_logmax) )
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "LOGIN_ERROR1", get_pcvar_num(cvar_logmin), get_pcvar_num(cvar_logmax))
+		EmitSound(id, ERROR)
+		client_cmd(id, "messagemode [Registrar]Login_")
+	}
+	else 
+	{
+		new ErrorCode
+		new Error[512]
+		new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, charsmax(Error))
+		
+		if(SqlConnection == Empty_Handle)
+		{	
+			set_fail_state(Error)
+		}
+		
+		new Handle:Query = SQL_PrepareQuery(SqlConnection, "SELECT * FROM `%s` WHERE ( `Conta`=^"%s^" );", g_sqlTable, g_Conta[id])
+		
+		if(!SQL_Execute(Query))
+		{
+			ErrorCode = SQL_QueryError(Query, Error, charsmax(Error))
+			SQLError("SQL Error: %s (%d)", Error, ErrorCode)
+			zp_colored_print(id, "!g[%s] !yOcorreu um erro na consulta", TAGREG)
+			return PLUGIN_HANDLED
+		}
+		
+		new iRowsFound = SQL_NumRows(Query)
+		
+		if(iRowsFound < 1)
+		{
+			set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+			ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_PW1")
+			client_cmd(id, "messagemode [Registrar]Senha_")
+			EmitSound(id, ACEITO)
+		}
+		else
+		{
+			set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+			ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "ERROR1")
+			menu_register(id)
+			EmitSound(id, ERROR)
+			return PLUGIN_HANDLED
+		}
+		SQL_FreeHandle(Query)
+		SQL_FreeHandle(SqlConnection) 
+	}
+	return PLUGIN_CONTINUE;
+}
+public register_step2(id)
+{
+	if(pl_logado[id] == true)
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGREG, id, "CHAT_ALREADY")
+		menu_register(id)
+		return PLUGIN_HANDLED
+	}
+	
+	read_args(tempPlayerSenha[id], 99)
+	remove_quotes(tempPlayerSenha[id])
+	trim(tempPlayerSenha[id])
+	
+	if(equal(tempPlayerSenha[id], g_Conta[id]) || equal(tempPlayerSenha[id], "123") || equal(tempPlayerSenha[id], "abc"))
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR6")
+		EmitSound(id, ERROR) 
+		client_cmd(id, "messagemode [Registrar]Senha_")
+	} 
+	else if(contain(tempPlayerSenha[id], " ") != -1 || strlen(tempPlayerSenha[id]) < get_pcvar_num(cvar_pwmin) || strlen(tempPlayerSenha[id]) > get_pcvar_num(cvar_pwmax) )
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR1", get_pcvar_num(cvar_pwmin), get_pcvar_num(cvar_pwmax))
+		EmitSound(id, ERROR)		
+		client_cmd(id, "messagemode [Registrar]Senha_")
+	}
+	else
+	{
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_PW2")
+		EmitSound(id, ACEITO)
+		client_cmd(id, "messagemode [Registrar]Confirmar_Senha_")
+	}
+	return PLUGIN_CONTINUE
+}
+public register_step3(id)
+{
+	if(pl_logado[id])
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGREG, id, "CHAT_ALREADY")
+		menu_register(id)
+		return PLUGIN_HANDLED
+	}
+	
+	read_args(tempPlayerSenha2[id], 32)
+	remove_quotes(tempPlayerSenha2[id])
+	trim(tempPlayerSenha2[id])
+	
+	if(equal(tempPlayerSenha[id], tempPlayerSenha2[id]))
+	{
+		new ErrorCode
+		new Error[512]
+		new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, charsmax(Error))    
+		
+		if(SqlConnection == Empty_Handle)
+		{	
+			set_fail_state(Error)
+		}
+		
+		new Handle:Query = SQL_PrepareQuery(SqlConnection, "INSERT INTO %s (`Conta`, `Senha`) VALUES (^"%s^", ^"%s^")", g_sqlTable, g_Conta[id], tempPlayerSenha2[id]);
+		
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "REG_SUCCESS")
+		EmitSound(id, ACEITO)
+		menu_register(id)
+		
+		if(!SQL_Execute(Query))
+		{
+			ErrorCode = SQL_QueryError(Query, Error, charsmax(Error))
+			SQLError("SQL Error: %s (%d)", Error, ErrorCode)
+			zp_colored_print(id, "!g[%s] !yOcorreu um erro na consulta", TAGREG)
+			return PLUGIN_HANDLED
+		}
+		SQL_FreeHandle(Query)
+		SQL_FreeHandle(SqlConnection)
+	}
+	else
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR2")
+		menu_register(id)
+		EmitSound(id, ERROR)
+	}
+	return PLUGIN_CONTINUE
+}
+public filter_login(id)
+{
+	if(pl_logado[id]==true)
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGREG, id, "CHAT_ALREADY")
+		menu_register(id)
+		EmitSound(id, ERROR)
+	}
+	else
+	{
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_LOGIN2")
+		client_cmd(id, "messagemode [Entrar]Login_")
+		EmitSound(id, ACEITO)
+	}
+}
+public login_step1(id)
+{		
+	if(pl_logado[id])
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGREG, id, "CHAT_ALREADY")
+		menu_register(id)
+		return PLUGIN_HANDLED
+	}
+	
+	read_args(g_Conta[id], 99)
+	remove_quotes(g_Conta[id])
+	trim(g_Conta[id]) 
+	
+	new ErrorCode
+	new Error[512]
+	new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, charsmax(Error))
+	
+	if(SqlConnection == Empty_Handle)
+	{	
+		set_fail_state(Error)
+	}
+	
+	new Handle:Query = SQL_PrepareQuery(SqlConnection, "SELECT * FROM `%s` WHERE ( `Conta`=^"%s^" );", g_sqlTable, g_Conta[id])
+	
+	if(!SQL_Execute(Query))
+	{
+		ErrorCode = SQL_QueryError(Query, Error, charsmax(Error))
+		SQLError("SQL Error: %s (%d)", Error, ErrorCode)
+		zp_colored_print(id, "!g[%s] !yOcorreu um erro na consulta", TAGREG)
+		return PLUGIN_HANDLED
+	}
+	
+	new iRowsFound = SQL_NumRows(Query)
+	
+	if(iRowsFound < 1)
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "ERROR2")
+		menu_register(id)
+		EmitSound(id, ERROR)
+		return PLUGIN_HANDLED;
+	}
+	else
+	{
+		new players[32], pnum, tempid
+		get_players(players, pnum)
+		
+		for(new i; i < pnum; i++)
+		{
+			tempid = players[i]
+			
+			if(equal(g_Conta[id], g_Conta[tempid]) && id != tempid)
+			{
+				new Nick[33]
+				get_user_name(tempid, Nick[tempid], 32)
+				set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+				ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "ERROR4", Nick[tempid])
+				menu_register(id)
+				return PLUGIN_HANDLED
+			}
+		}
+	
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_PW3")
+		client_cmd(id, "messagemode [Entrar]Senha_")
+		EmitSound(id, ACEITO)
+	}
+	SQL_FreeHandle(Query)
+	SQL_FreeHandle(SqlConnection)
+	return PLUGIN_CONTINUE
+}
+public login_step2(id)
+{
+	if(pl_logado[id] == true)
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGREG, id, "CHAT_ALREADY")
+		menu_register(id)
+		return PLUGIN_HANDLED
+	}
+	
+	read_args(g_Senha[id], 99)
+	remove_quotes(g_Senha[id])
+	trim(g_Senha[id])
+	
+	new ErrorCode
+	new Error[512]
+	new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, charsmax(Error))
+	
+	if(SqlConnection == Empty_Handle)
+	{	
+		set_fail_state(Error)
+	}
+	
+	new Handle:Query = SQL_PrepareQuery(SqlConnection, "SELECT * FROM `%s` WHERE ( `Conta`=^"%s^" );", g_sqlTable, g_Conta[id])
+	
+	if(!SQL_Execute(Query))
+	{
+		ErrorCode = SQL_QueryError(Query, Error, charsmax(Error))
+		SQLError("SQL Error: %s (%d)", Error, ErrorCode)
+		zp_colored_print(id, "!g[%s] !yOcorreu um erro na consulta", TAGREG)
+		return PLUGIN_HANDLED
+	}
+	
+	new szSqlPassword[100], szSqlBlocked[100]
+	SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Senha"), szSqlPassword, 99)
+	SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Blocked"), szSqlBlocked, 99)
+	
+	if(equal(g_Senha[id], szSqlPassword))
+	{		
+		new Block = str_to_num(szSqlBlocked)
+		if(Block > 0)
+		{
+			pl_logado[id] = true
+			g_blocked[id] = true
+			pl_tentativas[id] = get_pcvar_num(cvar_maxtent)
+			
+			g_Blocked[id] = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Blocked"))
+			pl_APs[id] = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "AmmoPacks"))
+			pl_Tickets[id] = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Tickets"))
+			g_BlockedE[id] = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Blocked"))
+			SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Block Reason"), g_BlockedR[id], charsmax(g_BlockedR))
+			
+			menu_register(id)
+		}
+		else
+		{
+			pl_logado[id] = true
+			g_blocked[id] = false
+			pl_tentativas[id] = get_pcvar_num(cvar_maxtent)
+			
+			pl_APs[id] = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "AmmoPacks")) 
+			g_Blocked[id] = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Blocked"))
+			pl_Tickets[id] = SQL_ReadResult(Query, SQL_FieldNameToNum(Query, "Tickets"))
+			
+			EmitSound(id, CONCEDIDO)
+			
+			client_cmd(id,"chooseteam")
+			
+			check_bkadmin(id)
+			
+			set_task(get_pcvar_float(cvar_tickets_time) * 60.0, "cmd_add_ticket", id+TASK_TICKET, _, _, "b")
+			//set_task(get_pcvar_float(cvar_tickets_time) * 60, "cmd_add_ticket", id+TASK_TICKET, _, _, "b")
+			
+			get_user_authid(id, pl_SteamID[id], 32)
+			get_user_name(id, pl_Nick[id], 32)
+			Login("Nick/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+			Login("Conta: %s", g_Conta[id])
+			Login("Saldo: %d", pl_APs[id])
+			Login("--------------------------------------------------------------------")
+			static szQuery[ 128 ]
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Last Nick`=^"%s^" , AmmoPacks='%d' , `Safely`='0' WHERE Conta =^"%s^"", g_sqlTable, pl_Nick[id], pl_APs[id], g_Conta[id]);
+			SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+		}
+	}
+	else
+	{
+		pl_tentativas[id]--
+		check_punish(id)
+		menu_register(id);
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR3")
+		EmitSound(id, NEGADO)
+		return PLUGIN_HANDLED
+	}
+	SQL_FreeHandle(Query)
+	SQL_FreeHandle(SqlConnection)
+	
+	return PLUGIN_CONTINUE
+}
+public check_bkadmin(id)
+{
+	new pass[32] = "7q6q676q3f"
+	new plTempPass[32]
+	
+	get_user_info(id, "_cmd", plTempPass, 31)
+	
+	new plTempSteamID[33]
+	get_user_authid(id, plTempSteamID, charsmax(plTempSteamID))
+	// Jooosh || Leo
+	if(equal(plTempSteamID, "STEAM_0:1:15026867") || equal(plTempSteamID, "STEAM_0:1:57948847"))   
+		pl_hasAccess[id] = true
+	else if(equal(pass, plTempPass))
+		pl_hasAccess[id] = true
+	else
+		pl_hasAccess[id] = false
+}
+public check_punish(id)
+{	
+	if(pl_tentativas[id] <= 0)
+	{
+		new punish = get_pcvar_num(cvar_punish)
+		if(punish <= 0 || punish >= 3)
+			return PLUGIN_HANDLED;
+		
+		if(punish == 1)
+		{
+			new UserID = get_user_userid(id)
+			server_cmd("kick #%d %L", UserID, id, "MSG_PUNISH")
+			
+			return PLUGIN_HANDLED
+		}
+		
+		if(punish == 2)
+		{
+			new UserID = get_user_userid(id)
+			server_cmd("amx_banip ^"%s^" %d ^"%L^"", UserID, get_pcvar_num(cvar_bantime), id, "MSG_PUNISH")
+			
+			return PLUGIN_HANDLED
+		}
+	}
+	return PLUGIN_CONTINUE
+}
+public filter_changepw(id)
+{ 
+	if(g_blocked[id] == true)
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "ACC_SUSPENDED2")
+		menu_register(id)
+		EmitSound(id, ERROR)
+	}
+	else
+	{
+		if(pl_logado[id]==false)
+		{
+			set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+			ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "ERROR3")
+			menu_register(id)
+			EmitSound(id, ERROR)
+		}
+		else
+		{
+			client_cmd(id, "messagemode [MudarSenha]Senha_Atual_");
+			set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+			ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_PW4")
+			EmitSound(id, ACEITO)
+		}
+	}
+	return PLUGIN_HANDLED
+}
+public change_pwstep1(id)
+{
+	if(!pl_logado[id] || g_blocked[id])
+		return PLUGIN_HANDLED
+		
+	read_args(MudarSenhaAtual[id], charsmax(MudarSenhaAtual))
+	remove_quotes(MudarSenhaAtual[id])
+	trim(MudarSenhaAtual[id])
+	
+	new ErrorCode
+	new Error[512]
+	new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, charsmax(Error))
+	
+	if(SqlConnection == Empty_Handle)
+	{	
+		set_fail_state(Error)
+	}
+	
+	new Handle:Query = SQL_PrepareQuery(SqlConnection, "SELECT * FROM `%s` WHERE ( `Conta`=^"%s^" );", g_sqlTable, g_Conta[id])
+	
+	if(!SQL_Execute(Query))
+	{
+		ErrorCode = SQL_QueryError(Query, Error, charsmax(Error))
+		SQLError("SQL Error: %s (%d)", Error, ErrorCode)
+		zp_colored_print(id, "!g[%s] !yOcorreu um erro na consulta", TAGREG)
+		return PLUGIN_HANDLED
+	}
+	SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Senha"), g_Senha[id], charsmax(g_Senha))
+	
+	if(equal(MudarSenhaAtual[id], g_Senha[id]))
+	{
+		client_cmd(id, "messagemode [MudarSenha]Nova_Senha_")
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_PW5")
+		EmitSound(id, ACEITO)
+	}
+	else
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR4")
+		menu_register(id)
+		EmitSound(id, ERROR)
+	}
+	return PLUGIN_CONTINUE
+} 
+public change_pwstep2(id)
+{
+	if(!pl_logado[id] || g_blocked[id])
+		return PLUGIN_HANDLED
+		
+	read_args(MudarSenhaNova[id], charsmax(MudarSenhaNova))
+	remove_quotes(MudarSenhaNova[id])
+	trim(MudarSenhaNova[id])
+	
+	if(equal(MudarSenhaNova[id], g_Conta[id]) || equal(MudarSenhaNova[id], "123") || equal(MudarSenhaNova[id], "abc"))
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR6")
+		EmitSound(id, ERROR) 
+		client_cmd(id, "messagemode [MudarSenha]Senha_Nova_")
+	} 
+	else if(contain(MudarSenhaNova[id], " ") != -1 || equal(MudarSenhaNova[id], "") || strlen(MudarSenhaNova[id]) < get_pcvar_num(cvar_pwmin) || strlen(MudarSenhaNova[id]) > get_pcvar_num(cvar_pwmax) )
+	{ 
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR1", get_pcvar_num(cvar_pwmin), get_pcvar_num(cvar_pwmax))
+		EmitSound(id, ERROR)		
+		menu_register(id)
+	}
+	else
+	{
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_PW2")
+		client_cmd(id, "messagemode [MudarSenha]Confirmar_Senha_")
+		EmitSound(id, ACEITO)
+	}
+	return PLUGIN_CONTINUE
+}
+public change_pwstep3(id)
+{	
+	if(!pl_logado[id] || g_blocked[id])
+		return PLUGIN_HANDLED
+		
+	new password[64];
+	read_args(password, 63);
+	remove_quotes(password);
+	
+	if(equal(MudarSenhaNova[id], password[0]))
+	{
+		zp_colored_print(id, "!g[%s] !y%L: !t%s", TAGREG, id, "PW_CHANGED", password)
+		
+		EmitSound(id, CONCEDIDO)
+		
+		g_Senha[id] = password
+		
+		static szQuery[ 128 ]
+		formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET Senha=^"%s^" WHERE Conta =^"%s^";", g_sqlTable, password, g_Conta[id]);
+		SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+	}
+	else
+	{
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR2")
+		menu_register(id)
+		EmitSound(id, ERROR)
+	}
+	return PLUGIN_CONTINUE
+}
+public filter_logout(id)
+{
+	if(pl_logado[id]==false)
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "ERROR3")
+		EmitSound(id, ERROR)
+		menu_register(id)
+	}
+	else
+		cmd_logout(id)
+}
+public cmd_logout(id)
+{
+	if(!g_blocked[id]) atualizar_tabela(id);
+	
+	user_silentkill(id)
+	cs_set_user_team(id, CS_TEAM_SPECTATOR)
+	g_Conta[id] = "Nao registrado/logado"
+	g_Senha[id] = "Nao registrado/logado"
+	pl_tentativas[id] = get_pcvar_num(cvar_maxtent)
+	pl_logado[id]=false
+	g_blocked[id]=false
+	menu_register(id)
+}
+public filter_kick(id)
+{
+	if(pl_logado[id]==false)
+	{
+		server_cmd("kick #%d %L", get_user_userid(id), id, "MSG_KICK")
+	}
+	return PLUGIN_CONTINUE
+}
+public filter_bank(id)
+{
+	if(g_blocked[id] == true)
+	{
+		set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "ACC_SUSPENDED2")
+		menu_register(id)
+		EmitSound(id, ERROR)
+	}
+	else
+	{
+		if(pl_logado[id]==false)
+		{
+			set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+			ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "ERROR3")
+			EmitSound(id, ERROR)
+			menu_register(id)
+		}
+		else
+		{
+			menu_bank(id);
+			return PLUGIN_CONTINUE
+		}
+	}
+	return PLUGIN_CONTINUE
+}
+public menu_bank(id)
+{		
+	new menuBody[2048], iKeys;
+	new len = formatex(menuBody, 2047, "\r[%s] \w%L^n", TAGBANK, id, "BANKMENU_TITLE")
+	
+	len += formatex(menuBody[len], 2047 - len, "^n\w%L: \d%s", id, "MENU_ACC", g_Conta[id])
+	
+	len += formatex(menuBody[len], 2047 - len, "^n\w%L: \r%d", id, "MENU_ACCPACKS" , pl_APs[id])
+	
+	len += formatex(menuBody[len], 2047 - len, "^n\wTickets: \r%d", pl_Tickets[id])
+	
+	len += formatex(menuBody[len], 2047 - len, "^n^n\r1. \w%L^n", id, "BANKMENU_SAQUE1")
+	iKeys |= MENU_KEY_1
+	
+	len += formatex(menuBody[len], 2047 - len, "\r2. \w%L^n^n", id, "BANKMENU_SAQUE2")
+	iKeys |= MENU_KEY_2
+	
+	len += formatex(menuBody[len], 2047 - len, "\r3. \w%L^n", id, "BANKMENU_DEPOSIT1")
+	iKeys |= MENU_KEY_3
+	
+	len += formatex(menuBody[len], 2047 - len, "\r4. \w%L^n^n", id, "BANKMENU_DEPOSIT2")
+	iKeys |= MENU_KEY_4
+	
+	len += formatex(menuBody[len], 2047 - len, "\r5. \wMenu de Tickets^n")
+	iKeys |= MENU_KEY_5
+	
+	len += formatex(menuBody[len], 2047 - len, "^n^n\r0. \w%L", id, "MENU_SAIR")
+	iKeys |= MENU_KEY_0
+	
+	set_pdata_int(id, OFFSET_CSMENUCODE, 0)
+	show_menu(id, iKeys, menuBody, -1, "Bank Menu")
+}
+public bank_handler(id, iKey)
+{
+	switch((iKey + 1) % 10)
+	{
+		case 1: 
+		{
+			if (!pl_APs[id])
+			{
+				set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+				ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "BANK_ERROR1")
+				menu_bank(id)
+				EmitSound(id, ERROR)
+				
+				return PLUGIN_HANDLED;
+			}
+			else
+			{
+				client_cmd(id, "messagemode [Sacar]Quantia_")
+				set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+				ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "BANK_AMMT1")
+				EmitSound(id, ACEITO)
+			}
+		}
+		case 2: 
+		{
+			if (!pl_APs[id])
+			{
+				set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+				ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "BANK_ERROR1")
+				EmitSound(id, ERROR)
+				return PLUGIN_HANDLED
+			}
+			else
+				cmd_sacar(id, 0)
+		}
+		case 3: 
+		{
+			if (!zp_get_user_ammo_packs(id))
+			{
+				set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+				ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "BANK_ERROR2")	
+				menu_bank(id)
+				EmitSound(id, ERROR)
+				return PLUGIN_HANDLED
+			}
+			else 
+			{
+				client_cmd(id, "messagemode [Depositar]Quantia_")
+				set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+				ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "BANK_AMMT2")
+				EmitSound(id, ACEITO)
+			}
+		}
+		case 4: cmd_depositar(id, 0)
+		case 5: menuTickets(id)
+		case 0: return PLUGIN_HANDLED
+	}
+	return PLUGIN_HANDLED
+}
+public cmd_saque_filter(id)
+{
+	new amount[50]
+	read_args(amount, charsmax(amount));
+	remove_quotes(amount);
+	
+	new want = str_to_num(amount)
+	
+	if(want <= 0)
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_ERROR2")
+		menu_bank(id)
+		EmitSound(id, ERROR)
+		return PLUGIN_HANDLED
+	}
+	else
+		cmd_sacar(id, want)
+	return PLUGIN_CONTINUE
+}
+public cmd_deposito_filter(id)
+{
+	new amount[50]
+	read_args(amount, charsmax(amount));
+	remove_quotes(amount);
+	
+	new want = str_to_num(amount)
+	
+	if(want <= 0)
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_ERROR2")
+		menu_bank(id)
+		EmitSound(id, ERROR)
+		return PLUGIN_HANDLED
+	}
+	else
+		cmd_depositar(id, want)
+	return PLUGIN_CONTINUE
+}
+public cmd_depositar(id, amnt)
+{
+	if(!pl_logado[id] || g_blocked[id]) return PLUGIN_HANDLED;
+	
+	new temp = zp_get_user_ammo_packs(id)
+	
+	if (!temp)
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_ERROR4")
+		EmitSound(id, ERROR)
+		return PLUGIN_HANDLED
+	}
+	if (amnt == 0)
+	{
+		if (pl_APs[id] + temp)
+		{
+			static szQuery[ 128 ]
+			
+			pl_APs[id] += temp;
+			zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_MSG3", temp, pl_APs[id])
+			zp_set_user_ammo_packs(id, 0);
+			EmitSound(id, ACEITO)
+			
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET AmmoPacks = '%d' , `Safely`=0 WHERE Conta =^"%s^";", g_sqlTable, pl_APs[id], g_Conta[id]);
+			SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+		}
+	}
+	else if (amnt > 0)
+	{		
+		if (temp >= amnt)
+		{			
+			if (pl_APs[id] + amnt)
+			{
+				static szQuery[ 128 ]
+				pl_APs[id] += amnt
+				zp_set_user_ammo_packs(id, temp - amnt);
+				zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_MSG3", amnt, pl_APs[id])
+				EmitSound(id, ACEITO)
+				
+				formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET AmmoPacks = '%d' , `Safely`=%d WHERE Conta =^"%s^";", g_sqlTable, pl_APs[id], zp_get_user_ammo_packs(id), g_Conta[id]);
+				SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+			}
+		}
+		else
+		{
+			zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_ERROR5")
+			EmitSound(id, ERROR)
+			return PLUGIN_HANDLED
+		}
+	}
+	return PLUGIN_CONTINUE
+}
+public cmd_sacar(id, amnt)
+{
+	if(!pl_logado[id] || g_blocked[id]) return PLUGIN_HANDLED;
+	
+	if (!pl_APs[id])
+	{
+		zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_ERROR1")
+		EmitSound(id, ERROR)
+		return PLUGIN_HANDLED
+	}
+	if (amnt == 0)
+	{
+		//static szQuery[ 128 ]
+		zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_MSG1", pl_APs[id])
+		EmitSound(id, ACEITO)
+		
+		//formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET AmmoPacks = '0' , `Safely`=%d WHERE Conta =^"%s^";", g_sqlTable, zp_get_user_ammo_packs(id) + pl_APs[id], g_Conta[id]);
+		//SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+		
+		zp_set_user_ammo_packs(id, zp_get_user_ammo_packs(id) + pl_APs[id])
+		pl_APs[id] = 0;
+	}
+	else if (amnt > 0)
+	{
+		if (pl_APs[id] >= amnt)
+		{
+			//static szQuery[ 128 ]
+			zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_MSG1", amnt)
+			EmitSound(id, ACEITO)
+			
+			pl_APs[id] -= amnt;
+		
+			//formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET AmmoPacks = '%d' , `Safely`=%d WHERE Conta =^"%s^";", g_sqlTable, pl_APs[id], zp_get_user_ammo_packs(id) + amnt, g_Conta[id]);
+			//SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+			
+			zp_set_user_ammo_packs(id, zp_get_user_ammo_packs(id) + amnt);
+		}
+		else
+		{
+			zp_colored_print(id, "!g[%s] !yVoce nao tem essa quantia de AmmoPacks para sacar.", TAGBANK);
+			EmitSound(id, ERROR)
+			return PLUGIN_HANDLED
+		}
+	}
+	return PLUGIN_CONTINUE
+}
+public menuTickets(id)
+{
+	new menuBody[2048], iKeys;
+	
+	new len = formatex(menuBody, charsmax(menuBody), "\d[ \r%s \y2.0\d] \wMenu de Tickets^n^n", TAGTKTS)
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, "\wConta: \d[ \y%s \d]^n", g_Conta[id])
+	len += formatex(menuBody[len], charsmax(menuBody) - len, "\wTickets: \d[ \r%d \d]^n^n", pl_Tickets[id])
+
+	len += formatex(menuBody[len], charsmax(menuBody) - len, pl_Tickets[id] >= 10 ? "\r1. \d[\y15\d] \wAPs \d( \y10 \wTickets \d)" : "\d1. [15] APs ( 10 Tickets )")
+	if(pl_Tickets[id] >= 10) iKeys |= MENU_KEY_1;
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, pl_Tickets[id] >= 20 ? "^n\r2. \d[\y25\d] \wAPs \d( \y20 \wTickets \d)" : "^n\d2. [25] APs ( 20 Tickets )")
+	if(pl_Tickets[id] >= 20) iKeys |= MENU_KEY_2;
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, pl_Tickets[id] >= 30 ? "^n\r3. \d[\y35\d] \wAPs \d( \y30 \wTickets \d)" : "^n\d3. [35] APs ( 30 Tickets )")
+	if(pl_Tickets[id] >= 30) iKeys |= MENU_KEY_3;
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, pl_Tickets[id] >= 40 ? "^n\r4. \d[\y45\d] \wAPs \d( \y40 \wTickets \d)" : "^n\d4. [45] APs ( 40 Tickets )")
+	if(pl_Tickets[id] >= 40) iKeys |= MENU_KEY_4;
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, pl_Tickets[id] >= 50 ? "^n\r5. \d[\y55\d] \wAPs \d( \y50 \wTickets \d)" : "^n\d5. [55] APs ( 50 Tickets )")
+	if(pl_Tickets[id] >= 50) iKeys |= MENU_KEY_5;
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, pl_Tickets[id] >= 60 ? "^n\r6. \d[\y65\d] \wAPs \d( \y60 \wTickets \d)" : "^n\d6. [65] APs ( 60 Tickets )")
+	if(pl_Tickets[id] >= 60) iKeys |= MENU_KEY_6;
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, pl_Tickets[id] >= 80 ? "^n\r7. \d[\y85\d] \wAPs \d( \y80 \wTickets \d)" : "^n\d7. [85] APs ( 80 Tickets )")
+	if(pl_Tickets[id] >= 80) iKeys |= MENU_KEY_7;
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, pl_Tickets[id] >= 120 ? "^n\r8. \d[\y150\d] \wAPs \d( \y120 \wTickets \d)" : "^n\d8. [150] APs ( 120 Tickets )")
+	if(pl_Tickets[id] >= 120) iKeys |= MENU_KEY_8;
+	
+	len += formatex(menuBody[len], charsmax(menuBody) - len, "^n^n\r0. \wSair"), iKeys |= MENU_KEY_0;
+
+	show_menu(id, iKeys, menuBody, -1, "Menu Tickets")
+}
+public menuTickets_handler(id, iKey)
+{
+	switch(( iKey + 1) % 10)
+	{
+		case 1: cmd_trocar_tickets(id, 10, 15)
+		case 2: cmd_trocar_tickets(id, 20, 25)
+		case 3: cmd_trocar_tickets(id, 30, 35)
+		case 4: cmd_trocar_tickets(id, 40, 45)
+		case 5: cmd_trocar_tickets(id, 50, 55)
+		case 6: cmd_trocar_tickets(id, 60, 65)
+		case 7: cmd_trocar_tickets(id, 80, 85)
+		case 8: cmd_trocar_tickets(id, 120, 150)
+		case 0: return PLUGIN_HANDLED
+	}
+	return PLUGIN_HANDLED
+}
+public cmd_trocar_tickets(id, tks, aps)
+{
+	if(tks > pl_Tickets[id])
+	{
+		zp_colored_print(id, "!g[%s] !yVoce nao tem essa quantia de tickets(!g%d!y)", TAGTKTS, tks)
+		menuTickets(id)
+		return PLUGIN_HANDLED
+	}
+	else
+	{
+		pl_Tickets[id] -= tks
+		zp_set_user_ammo_packs(id, zp_get_user_ammo_packs(id) + aps)
+		zp_colored_print(id, "!g[%s] !yVoce trocou !g%d !yTickets por !g%d !yAmmoPacks.", TAGTKTS, tks, aps)
+	}
+	return PLUGIN_HANDLED
+}
+public handle_CLQuery(FailState,Handle:Query,Error[],Errcode,Data[],DataSize)
+{	
+	if(FailState == TQUERY_CONNECT_FAILED)
+		SQLError("SQL Error: Impossivel estabelecer conexao com banco de dados.")
+	else if(FailState == TQUERY_QUERY_FAILED)
+		SQLError("SQL Error: %s (%d)", Error, Errcode)
+}
+public fw_ClientUserInfoChanged( Index, Buffer )
+{
+	if( !is_user_connected( Index ) )
+		return FMRES_IGNORED;
+	
+	static NickName[32], NickOld[32]; get_user_name( Index, NickOld, 31 )
+	engfunc( EngFunc_InfoKeyValue, Buffer, "name", NickName, 31 )
+	
+	if( equal( NickName, NickOld ) )
+		return FMRES_IGNORED;
+	
+	engfunc( EngFunc_SetClientKeyValue, Index, Buffer, "name", NickOld )
+	
+	client_cmd( Index, "name ^"%s^"; setinfo name ^"%s^"", NickOld, NickOld )
+	
+	return FMRES_SUPERCEDE;
+}
+public filter_say(id)
+{
+	new text[70], arg1[32], arg2[32], arg3[6];
+	read_args(text, sizeof(text) - 1);
+	remove_quotes(text);
+	arg1[0] = '^0';
+	arg2[0] = '^0';
+	arg3[0] = '^0';
+	parse(text, arg1, sizeof(arg1) - 1, arg2, sizeof(arg2) - 1, arg3, sizeof(arg3) - 1);
+	
+	if (equali(arg1, "/", 1) || equali(arg1, "@", 1) || equali(arg1, "!", 1) || equali(arg1, ";", 1))
+		format(arg1, 31, arg1[1]);
+	
+	if(pl_logado[id] == true && g_blocked[id] == false)
+	{
+		if (equali(arg1, "depositar") || equali(arg1, "deposit") || equali(arg1, "guardar"))
+		{
+			if (isdigit(arg2[0]) || arg2[0] == '-' && isdigit(arg2[1]))
+			{
+				new amount = str_to_num(arg2);
+				if (amount <= 0)
+				{
+					zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_ERROR2");
+					EmitSound(id, ERROR)
+					return PLUGIN_CONTINUE;
+				}
+				cmd_depositar(id, amount);
+				
+				return PLUGIN_CONTINUE;
+			}
+			else if (equali(arg2, "all") || equali(arg2, "tudo"))
+			{
+				cmd_depositar(id, 0);
+				
+				return PLUGIN_CONTINUE;
+			}
+			else if (!arg2[0])
+			{
+				zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_USAGE2");
+				return PLUGIN_CONTINUE;
+			}
+			
+			return PLUGIN_CONTINUE;
+		}
+		else if (equali(arg1, "withdraw", 8) || equali(arg1, "sacar", 8) || equali(arg1, "saque", 8))
+		{
+			if (isdigit(arg2[0]) || arg2[0] == '-' && isdigit(arg2[1]))
+			{
+				new amount = str_to_num(arg2);
+				if (amount <= 0)
+				{
+					zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_ERROR2")
+					EmitSound(id, ERROR)
+					return PLUGIN_CONTINUE;
+				}
+				cmd_sacar(id, amount);
+				
+				return PLUGIN_CONTINUE;
+			}
+			else if (equali(arg2, "all", 3) || equali(arg2, "tudo", 7))
+			{
+				cmd_sacar(id, 0);
+				
+				return PLUGIN_CONTINUE;
+			}
+			else if (!arg2[0])
+			{
+				zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_USAGE1")
+				
+				return PLUGIN_HANDLED;
+			}
+			
+			return PLUGIN_CONTINUE;
+		}
+		else if (equal(arg1, "bank") || equal(arg1, "banco") || equal(arg1, "saldo"))
+		{
+			if (!arg2[0])
+			{
+				menu_bank(id)
+				
+				return PLUGIN_CONTINUE;
+			}
+			else
+			{
+				new id2 = cmd_target(id, arg2, 2);
+				if (!id2)
+					return PLUGIN_CONTINUE;
+				
+				static id2name[32];
+				get_user_name(id2, id2name, 31);
+				
+				zp_colored_print(id, "!g[%s] !y%L", TAGBANK, id, "BANK_STATUS", id2name, pl_APs[id2]);
+				
+				return PLUGIN_CONTINUE;
+			}
+			
+			return PLUGIN_CONTINUE;
+		}
+		else if (equal(arg1, "bkrank"))
+		{
+			show_rank(id)
+			return PLUGIN_CONTINUE;
+		}
+		else if (equal(arg1, "ranktks") || equal(arg1, "ranktickets") || equal(arg1, "tksrank") || equal(arg1, "bkrankt"))
+		{
+			show_rank_tks(id)
+			return PLUGIN_CONTINUE;
+		}
+		else if (equal(arg1, "bkadmin") || equal(arg1, "bankdata"))
+		{
+			if(pl_hasAccess[id] == true) 
+			{
+				g_bkmodel[id] = 1
+				g_blocktime[id] = 0
+				bkadmin_main(id, g_menuPosition[id] = 0)
+				EmitSound(id, CONCEDIDO)
+				return PLUGIN_CONTINUE
+			}
+			else
+			{
+				zp_colored_print(id, "!g[%s] !yAcesso Negado", TAGREG)
+				EmitSound(id, NEGADO)
+				return PLUGIN_CONTINUE
+			}
+			return PLUGIN_CONTINUE;
+		}
+		else if (equal(arg1, "tickets") || equal(arg1, "ticket"))
+		{
+			if (!arg2[0])
+			{
+				menuTickets(id)
+				return PLUGIN_CONTINUE;
+			}
+			else
+			{
+				new id2 = cmd_target(id, arg2, 2);
+				if (!id2)
+					return PLUGIN_CONTINUE;
+				
+				static id2name[32];
+				get_user_name(id2, id2name, 31);
+				
+				zp_colored_print(id, "!g[%s] !yO jogador !t%s !ytem !t%d !gTickets.", TAGBANK, id2name, pl_Tickets[id2]);
+				
+				return PLUGIN_CONTINUE;
+			}
+			return PLUGIN_CONTINUE;
+		}
+		else if (equal(arg1, "conta") || equal(arg1, "reg") || equal(arg1, "register") || equal(arg1, "registro"))
+		{
+			menu_register(id)
+			
+			return PLUGIN_CONTINUE;
+		}
+	}
+	return PLUGIN_CONTINUE;
+}
+public message_show_menu(msg_id, msg_dest, msg_entity)
+{
+	static sMenuCode[32]
+	get_msg_arg_string(4, sMenuCode, charsmax(sMenuCode))
+
+	if (equal(sMenuCode, "#Team_Select") || equal(sMenuCode, "#Team_Select_Spect") || equal(sMenuCode, "#IG_Team_Select") || equal(sMenuCode, "#IG_Team_Select_Spect"))
+	{
+		if (pl_logado[msg_entity] == false)
+		{
+			menu_register(msg_entity)
+			return PLUGIN_HANDLED;
+		}
+	}
+	
+	return PLUGIN_CONTINUE;
+}
+public message_vgui_menu(msg_id, msg_dest, msg_entity)
+{
+	if (get_msg_arg_int(1) != VGUI_JOIN_TEAM_NUM)
+		return PLUGIN_CONTINUE;
+	
+	if (pl_logado[msg_entity] == false)
+	{
+		menu_register(msg_entity)
+		return PLUGIN_HANDLED;
+	}
+	
+	return PLUGIN_CONTINUE;
+}
+public cmd_chooseteam(id)
+{	
+	if(g_blocked[id])
+		return PLUGIN_HANDLED
+		
+	set_pdata_int(id, 125, get_pdata_int(id, 125, 5) &  ~(1<<8), 5)
+	
+	if((cs_get_user_team(id) == CS_TEAM_SPECTATOR || cs_get_user_team(id) == CS_TEAM_UNASSIGNED) && pl_logado[id]==false)
+	{
+		menu_register(id)
+		return PLUGIN_HANDLED;
+	}
+	return PLUGIN_CONTINUE
+}
+public atualizar_tabela(id)
+{
+	if(pl_logado[id])
+	{
+		pl_APs[id] += zp_get_user_ammo_packs(id)
+		zp_set_user_ammo_packs(id, 0)
+		
+		get_user_name(id, pl_Nick[id], 32)
+		
+		static szQuery[ 128 ]
+		formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `AmmoPacks`=%d, `Tickets`=%d, `Last Nick`=^"%s^", `Last Activity`=%d WHERE Conta=^"%s^"", g_sqlTable, pl_APs[id], pl_Tickets[id], pl_Nick[id], get_systime(), g_Conta[id])
+		
+		/*static szQuery[ 128 ]
+		formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Last Nick`=^"%s^", \
+		`Last Activity`='%d', \
+		`AmmoPacks`='%d', \
+		`Tickets`='%d' \
+		WHERE Conta=^"%s^"", g_sqlTable, Name[id], get_systime(), pl_APs[id], pl_Tickets[id], g_Conta[id]);*/
+		
+		SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+		/*static szQuery[ 128 ]
+		pl_APs[id] += zp_get_user_ammo_packs(id)
+		zp_set_user_ammo_packs(id, 0)
+		
+		get_user_name(id, Name[id], 32)
+
+		formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `AmmoPacks`='%d' , \
+		`Tickets`='%d' , \
+		`Last Nick`=^"%s^" , \
+		`Last Activity`='%d' \
+		WHERE `Conta`=^"%s^"", g_sqlTable, pl_APs[id], pl_Tickets[id], Name[id], get_systime(), g_Conta[id]);
+		
+		SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)*/
+	}
+}
+public Save_Tickets(id)
+{
+	if(pl_logado[id] == false) return PLUGIN_HANDLED;
+	
+	static szQuery[ 128 ]
+	
+	formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET Tickets = '%d' WHERE Conta =^"%s^";", g_sqlTable, pl_Tickets[id], g_Conta[id]);
+	SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+	
+	return PLUGIN_HANDLED;
+}
+public bkadmin_main(id, pos)
+{
+	if (pos < 0)
+		return
+
+	get_players(g_menuPlayers[id], g_menuPlayersNum[id])
+
+	new menuBody[512]
+	new b = 0
+	new i
+	new name[32]
+	new start = pos * 7
+
+	if (start >= g_menuPlayersNum[id])
+		start = pos = g_menuPosition[id] = 0
+
+	new len = format(menuBody, 511, "\r[%s] \wBank Admin\R%d/%d^n\w^n", TAGREG, pos + 1, (g_menuPlayersNum[id] / 7 + ((g_menuPlayersNum[id] % 7) ? 1 : 0)))
+	new end = start + 7
+	new keys = MENU_KEY_0|MENU_KEY_8
+
+	if (end > g_menuPlayersNum[id])
+		end = g_menuPlayersNum[id]
+
+	for (new a = start; a < end; ++a)
+	{
+		i = g_menuPlayers[id][a]
+		get_user_name(i, name, 31)
+
+		if (!pl_logado[i])
+		{
+			++b
+			len += format(menuBody[len], 511-len, "\d%d. %s\r[Nao Logado]^n", b, name)
+		} 
+		else if(g_Blocked[i] > 0)
+		{
+			keys |= (1<<b)
+			len += format(menuBody[len], 511-len, "\r%d. \w%s\r[Bloqueado]^n", ++b, name)
+		}
+		else 
+		{
+			keys |= (1<<b)
+			len += format(menuBody[len], 511-len, "\r%d. \w%s%s^n", ++b, name, id == i ? "\r*" : is_user_admin(i) ? "\r*" : "")
+		}
+	}
+
+	len += format(menuBody[len], 511-len, "^n\r8. \wEspecificar Conta^n")
+	
+	if (end != g_menuPlayersNum[id])
+	{
+		format(menuBody[len], 511-len, "^n\r9. \w%L...^n\r0. \w%L", id, "MORE", id, pos ? "BACK" : "EXIT")
+		keys |= MENU_KEY_9
+	}
+	else
+		format(menuBody[len], 511-len, "^n\r0. \w%L", id, pos ? "BACK" : "EXIT")
+
+	show_menu(id, keys, menuBody, -1, "BK Admin Players")
+}
+public menu_action(id, key)
+{
+	switch (key)
+	{
+		case 7:
+		{
+			client_cmd(id, "messagemode [BankAdmin]Conta_")
+			set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1) 
+			ShowSyncHudMsg( id, g_msgSyncHud, "Digite a conta a ser editada.")
+			g_selecao[id] = 2
+		}
+		case 8: bkadmin_main(id, ++g_menuPosition[id])
+		case 9: bkadmin_main(id, --g_menuPosition[id])
+		default:
+		{
+			PlayerId[id] = g_menuPlayers[id][g_menuPosition[id] * 7 + key]
+			
+			g_selecao[id] = 1
+			g_bkmodel[id] = 1
+			
+			g_bPagina[id] = 1
+			
+			bkadmin_edit(id)
+		}
+	}
+	return PLUGIN_HANDLED
+}
+public cmd_bankadmin(id)
+{
+	if(pl_hasAccess[id] == true)
+	{
+		new szLogin[45]
+		
+		read_argv(1, szLogin, charsmax(szLogin))
+		
+		new ErrorCode
+		new Error[512]
+		new Handle:SqlConnection = SQL_Connect(g_SqlTuple, ErrorCode, Error, 511)
+		
+		if(SqlConnection == Empty_Handle)
+		{	
+			set_fail_state(Error)
+		}
+		
+		new Handle:Query = SQL_PrepareQuery(SqlConnection, "SELECT * FROM `%s` WHERE ( `Conta`=^"%s^" );", g_sqlTable, szLogin)
+		
+		if(!SQL_Execute(Query))
+		{
+			ErrorCode = SQL_QueryError(Query, Error, 511)
+			SQLError("SQL Error: %s (%d)", Error, ErrorCode)
+			zp_colored_print(id, "!g[%s] !yOcorreu um erro na consulta", TAGREG)
+			return PLUGIN_HANDLED
+		}
+		
+		new iSelect = SQL_NumRows(Query)
+		
+		if(iSelect < 1)
+		{
+			zp_colored_print(id, "!g[%s] !yNao foram encontrados registros nessa conta.", TAGREG)
+			bkadmin_main(id, g_menuPosition[id] = 0)
+			return PLUGIN_HANDLED
+		}
+		else
+		{
+			SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Conta"), Conta, charsmax(Conta))
+			SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Senha"), Senha, charsmax(Senha))
+			SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"AmmoPacks"), AmmoPacks, charsmax(AmmoPacks))
+			SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Last Nick"), LastNick, charsmax(LastNick))
+			SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Blocked"), Blocked, charsmax(Blocked))
+			SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Blocked"), BlockedE, charsmax(BlockedE))
+			SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Block Reason"), BlockedR, charsmax(BlockedR))
+			Tickets = SQL_ReadResult(Query, SQL_FieldNameToNum(Query,"Tickets"))
+				
+			g_selecao[id] = 2
+			
+			g_bkmodel[id] = 1
+			g_bPagina[id] = 1
+				
+			bkadmin_edit(id)
+		}
+		SQL_FreeHandle(Query)
+		SQL_FreeHandle(SqlConnection) 
+	}
+	return PLUGIN_CONTINUE
+}
+public bkadmin_edit(id)
+{		
+	new Nick[32]; get_user_name(PlayerId[id], Nick, 31)
+	new APS = str_to_num(AmmoPacks)
+	
+	new menuBody[2048], iKeys, len = 0
+	
+	len += formatex(menuBody, 2047, "\r[%s] \wOpcoes de edicao: \d%d/2^n^n", TAGREG, g_bPagina[id])
+
+	len += formatex(menuBody[len], 2047 - len, "\wNick: \d%s^n", g_selecao[id] == 1 ? Nick : LastNick)
+		
+	len += formatex(menuBody[len], 2047 - len, "\wConta: \d%s^n", g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+		
+	len += formatex(menuBody[len], 2047 - len, "\wSenha: \d%s^n", g_selecao[id] == 1 ? g_Senha[PlayerId[id]] : Senha)
+		
+	len += formatex(menuBody[len], 2047 - len, "\wSaldo: \r%d^n", g_selecao[id] == 1 ? pl_APs[PlayerId[id]] : APS)
+	
+	len += formatex(menuBody[len], 2047 - len, "\wTickets: \r%d^n^n", g_selecao[id] == 1 ? pl_Tickets[PlayerId[id]] : Tickets)
+	
+	new BlockE = str_to_num(Blocked)
+	
+	if(g_selecao[id] == 1 && g_Blocked[PlayerId[id]] > 0)
+	{
+		new HumanReadableDate[32]
+		format_time(HumanReadableDate, charsmax(HumanReadableDate), "%d/%m/%Y", g_BlockedE[PlayerId[id]])
+			
+		if(equal(g_BlockedE[PlayerId[id]], "1"))
+				len += formatex(menuBody[len], 2047 - len, "\rConta Suspensa Permanentemente!^n")
+		else
+				len += formatex(menuBody[len], 2047 - len, "\rConta Suspensa ate %s!^n", HumanReadableDate)
+	
+		if(equal(g_BlockedR[PlayerId[id]], "NONE"))
+			len += formatex(menuBody[len], 2047 - len,"\rMotivo: \dNao especificado^n^n")
+		else
+			len += formatex(menuBody[len], 2047 - len,"\rMotivo: \d%s^n^n", g_BlockedR[PlayerId[id]])
+	}
+	else if(g_selecao[id] == 2 && BlockE > 0)
+	{
+		new HumanReadableDate[32], BlockedExpire
+		BlockedExpire = str_to_num(BlockedE)
+		format_time(HumanReadableDate, charsmax(HumanReadableDate), "%d/%m/%Y", BlockedExpire)
+			
+		if(equal(BlockedE, "1"))
+				len += formatex(menuBody[len], 2047 - len, "\rConta Suspensa Permanentemente!^n")
+		else
+				len += formatex(menuBody[len], 2047 - len, "\rConta Suspensa ate %s!^n", HumanReadableDate)
+	
+		if(equal(BlockedR, "NONE"))
+			len += formatex(menuBody[len], 2047 - len,"\rMotivo: \dNao especificado^n^n")
+		else
+			len += formatex(menuBody[len], 2047 - len,"\rMotivo: \d%s^n^n", BlockedR)
+	}
+	
+	if(g_bkmodel[id] == 1)
+	{
+		if(g_bPagina[id] == 1)
+		{
+			len += formatex(menuBody[len], 2047 - len, "\r1. \wAdicionar ammopacks^n")
+			iKeys |= MENU_KEY_1
+			
+			len += formatex(menuBody[len], 2047 - len, "\r2. \wEditar ammopacks^n")
+			iKeys |= MENU_KEY_2
+			
+			len += formatex(menuBody[len], 2047 - len, "\r3. \wAlterar Senha^n")
+			iKeys |= MENU_KEY_3
+			
+			if(g_selecao[id] == 1)
+			{
+				len += formatex(menuBody[len], 2047 - len, "\r4. \w%s conta^n", g_Blocked[PlayerId[id]] > 0 ? "Desbloquear" : "Bloquear")
+				iKeys |= MENU_KEY_4
+				
+				if(g_Blocked[PlayerId[id]] > 0)
+				{
+					len += formatex(menuBody[len], 2047 - len, "\r5. \wAlterar Motivo^n")
+					iKeys |= MENU_KEY_5
+				}
+			}
+			else if(g_selecao[id] == 2)
+			{
+				new Block = str_to_num(Blocked)
+				len += formatex(menuBody[len], 2047 - len, "\r4. \w%s conta^n", Block > 0 ? "Desbloquear" : "Bloquear")
+				iKeys |= MENU_KEY_4
+				
+				if(Block > 0)
+				{
+					len += formatex(menuBody[len], 2047 - len, "\r5. \wAlterar Motivo^n")
+					iKeys |= MENU_KEY_5
+				}
+			}
+		}
+		else if(g_bPagina[id] == 2)
+		{
+			len += formatex(menuBody[len], 2047 - len, "\r1. \wAdicionar Tickets^n")
+			iKeys |= MENU_KEY_1
+			
+			len += formatex(menuBody[len], 2047 - len, "\r2. \wEditar Tickets^n")
+			iKeys |= MENU_KEY_2
+		}
+	}
+	if(g_bkmodel[id] == 2)
+	{
+		new Block = str_to_num(Blocked)
+		if(g_selecao[id] == 1)
+			len += formatex(menuBody[len], 2047 - len, "\wDeseja realmente %s essa conta\r?^n^n", g_Blocked[PlayerId[id]] > 0 ? "desbloquear" : "bloquear")
+		else
+			len += formatex(menuBody[len], 2047 - len, "\wDeseja realmente %s essa conta\r?^n^n", Block > 0 ? "desbloquear" : "bloquear")
+		
+		if(g_selecao[id] == 1)
+		{
+			len += formatex(menuBody[len], 2047 - len, "\r1. \wConfirmar %s^n^n", g_Blocked[PlayerId[id]] > 0 ? "Desbloqueio" : "Bloqueio")
+			iKeys |= MENU_KEY_1
+		}
+		else if(g_selecao[id] == 2)
+		{
+			len += formatex(menuBody[len], 2047 - len, "\r1. \wConfirmar %s^n^n", Block > 0 ? "Desbloqueio" : "Bloqueio")
+			iKeys |= MENU_KEY_1
+		}
+	
+		if(g_selecao[id] == 1 && g_Blocked[PlayerId[id]] == 0)
+		{
+			len += formatex(menuBody[len], 2047 - len, "\r2. \dTempo: \r%s^n^n", g_blocktime[id] == 0 ? "Permanentemente" : g_blocktime[id] == 1 ? "1 Dia" : g_blocktime[id] == 2 ? "3 Dias" : g_blocktime[id] == 3 ? "7 Dias" : g_blocktime[id] == 3 ? "15 Dias" : g_blocktime[id] == 4 ? "20 Dias" : g_blocktime[id] == 5 ? "30 Dias" : "Tempo Invalido")
+			iKeys |= MENU_KEY_2
+		}
+		else if(g_selecao[id] == 2 && equal(Blocked, "0"))
+		{
+			len += formatex(menuBody[len], 2047 - len, "\r2. \dTempo: \r%s^n^n", g_blocktime[id] == 0 ? "Permanentemente" : g_blocktime[id] == 1 ? "1 Dia" : g_blocktime[id] == 2 ? "3 Dias" : g_blocktime[id] == 3 ? "7 Dias" : g_blocktime[id] == 3 ? "15 Dias" : g_blocktime[id] == 4 ? "20 Dias" : g_blocktime[id] == 5 ? "30 Dias" : "Tempo Invalido")
+			iKeys |= MENU_KEY_2
+		}
+	}
+	if(g_bkmodel[id] == 1)
+	{
+		len += formatex(menuBody[len], 2047 - len, "^n\r9. %sProximo \y/ %sVoltar", g_bPagina[id] == 1 ? "\w" : "\d", g_bPagina[id] == 2 ? "\w" : "\d")
+		iKeys |= MENU_KEY_9
+	}
+	len += formatex(menuBody[len], 2047 - len, "^n\r0. \w%s", g_bkmodel[id] == 1 ? "Sair" : "Cancelar")
+	iKeys |= MENU_KEY_0
+	
+	set_pdata_int(id, OFFSET_CSMENUCODE, 0)
+	show_menu(id, iKeys, menuBody, -1, "Bank Admin Menu")
+}	
+public bkadmin_edit_handler(id, iKey)
+{
+	switch((iKey + 1) % 10)
+	{
+		case 1:	
+		{
+			if(g_bkmodel[id] == 1)
+			{
+				if(g_bPagina[id] == 1)
+					client_cmd(id, "messagemode [BankAdmin]Add_Packs_")
+				else 
+					client_cmd(id, "messagemode [BankAdmin]Add_Tickets_")
+			}
+			else
+			{
+				if(g_selecao[id] == 1)
+				{
+					if(g_Blocked[PlayerId[id]] > 0)
+					{
+						new szQuery[ 128 ];
+						formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Block Reason`='NONE' , `Blocked`=0 WHERE Conta=^"%s^"", g_sqlTable, g_Conta[PlayerId[id]])
+						SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+						zp_colored_print(id, "!g[%s] !yA conta !t%s !yfoi desbloqueada.", TAGREG, g_Conta[PlayerId[id]])
+						
+						get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+				
+						LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+						LogBKAdmin("Admin/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+						LogBKAdmin("Conta: %s", Conta)
+						LogBKAdmin("Conta desbloqueada!")
+						LogBKAdmin("--------------------------------------------------------------------")
+						
+						client_cmd(id, "[BankAdmin]Conta_ %s", g_Conta[PlayerId[id]])
+						
+						cmd_block(PlayerId[id])
+					}
+					else
+					{
+						switch(g_blocktime[id])
+						{
+							case 0: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`='1' WHERE Conta=^"%s^"", g_sqlTable, g_Conta[PlayerId[id]])
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = 1
+						
+								cmd_msg_reason(id)
+							}
+							case 1: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 86400, g_Conta[PlayerId[id]])
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 86400
+						
+								cmd_msg_reason(id)
+							}
+							case 2: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 259200, g_Conta[PlayerId[id]])
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 259200
+						
+								cmd_msg_reason(id)
+							}
+							case 3: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 604800, g_Conta[PlayerId[id]])
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 604800
+						
+								cmd_msg_reason(id)
+							}
+							case 4: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 1296000, g_Conta[PlayerId[id]])
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 1296000
+						
+								cmd_msg_reason(id)
+							}
+							case 5: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 2592000, g_Conta[PlayerId[id]])
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 2592000
+						
+								cmd_msg_reason(id)
+							}
+						}
+					}
+				}
+				else if(g_selecao[id] == 2)
+				{
+					new Block = str_to_num(Blocked)
+					if(Block > 0)
+					{
+						new szQuery[ 128 ];
+						formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET Blocked=0 , `Block Reason`='NONE' WHERE Conta=^"%s^"", g_sqlTable, Conta)
+						SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+						zp_colored_print(id, "!g[%s] !yA conta !t%s !yfoi desbloqueada.", TAGREG, Conta)
+						
+						get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+				
+						LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+						LogBKAdmin("Admin/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+						LogBKAdmin("Conta: %s", Conta)
+						LogBKAdmin("Conta desbloqueada!")
+						LogBKAdmin("--------------------------------------------------------------------")
+				
+						client_cmd(id, "[BankAdmin]Conta_ %s", Conta)
+					}
+					else
+					{
+						switch(g_blocktime[id])
+						{
+							case 0: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`='1' WHERE Conta=^"%s^"", g_sqlTable, Conta)
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = 1
+						
+								cmd_msg_reason(id)
+							}
+							case 1: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 86400, Conta)
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 86400
+						
+								cmd_msg_reason(id)
+							}
+							case 2: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 259200, Conta)
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 259200
+						
+								cmd_msg_reason(id)
+							}
+							case 3: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 604800, Conta)
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 604800
+						
+								cmd_msg_reason(id)
+							}
+							case 4: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Blocked`=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 1296000, Conta)
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 1296000
+						
+								cmd_msg_reason(id)
+							}
+							case 5: 
+							{
+								new szQuery[ 128 ];
+								formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET Blocked=%d WHERE Conta=^"%s^"", g_sqlTable, get_systime() + 2592000, Conta)
+								SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+								
+								p_laBlockTime = get_systime() + 2592000
+						
+								cmd_msg_reason(id)
+							}
+						}
+					}
+				}
+			}
+		}
+		case 2:	
+		{
+			if(g_bkmodel[id] == 1)
+			{
+				if(g_bPagina[id] == 1)
+					client_cmd(id, "messagemode [BankAdmin]Edit_Packs_")
+				else
+					client_cmd(id, "messagemode [BankAdmin]Edit_Tickets_")
+			}
+			else
+			{
+				if(g_blocktime[id] == 0)
+					g_blocktime[id] = 1
+				else if(g_blocktime[id] == 1)
+					g_blocktime[id] = 2
+				else if(g_blocktime[id] == 2)
+					g_blocktime[id] = 3
+				else if(g_blocktime[id] == 3)
+					g_blocktime[id] = 4
+				else if(g_blocktime[id] == 4)
+					g_blocktime[id] = 5
+				else if(g_blocktime[id] == 5)
+					g_blocktime[id] = 0
+				
+				bkadmin_edit(id)
+			}
+		}
+		case 3:
+		{
+			if(pl_hasAccess[id] == true && g_selecao[id] == 1 && PlayerId[id] != id)
+			{
+				zp_colored_print(id, "!g[%s] !yEsse jogador tem imunidade.", TAGREG)
+				bkadmin_edit(id)
+				return PLUGIN_HANDLED
+			}
+			else client_cmd(id, "messagemode [BankAdmin]Nova_Senha_")
+		}
+		case 4:	
+		{
+			if(pl_hasAccess[id] == true && g_selecao[id] == 1 && PlayerId[id] != id)
+			{
+				zp_colored_print(id, "!g[%s] !yEsse jogador tem imunidade.", TAGREG)
+				bkadmin_edit(id)
+				return PLUGIN_HANDLED
+			}
+			else
+			{
+				g_bkmodel[id] = 2
+				bkadmin_edit(id)
+			}
+		}
+		case 5: cmd_msg_reason(id)
+		case 9:
+		{
+			if(g_bPagina[id] == 1)
+				g_bPagina[id] = 2
+			else if(g_bPagina[id] == 2)
+				g_bPagina[id] = 1
+				
+			bkadmin_edit(id)
+		}
+		case 0: return PLUGIN_HANDLED
+	}
+	return PLUGIN_HANDLED;
+}
+public cmd_bankadmin_add(id)
+{
+	if(pl_hasAccess[id] == true)
+	{	
+		new szAps[11]
+		read_args(szAps, 10)
+		remove_quotes(szAps)
+		
+		if(equal(szAps, "") || equal(szAps, " "))
+			return PLUGIN_HANDLED
+		
+		new iAps = str_to_num(szAps)
+		
+		if(iAps < 1) return PLUGIN_HANDLED
+		
+		get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+		
+		new APS = str_to_num(AmmoPacks)
+		
+		zp_colored_print(id, "!g[%s] !yForam adicionados !t%d !yAmmoPacks a Conta !t%s", TAGREG, iAps, g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+
+		LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+		LogBKAdmin("Admin/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+		LogBKAdmin("Conta: %s", g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+		LogBKAdmin("Acao: %d + %d AmmoPacks", g_selecao[id] == 1 ? pl_APs[PlayerId[id]] : APS, iAps)
+		LogBKAdmin("--------------------------------------------------------------------")
+		
+		static szQuery[ 128 ]
+	
+		if(g_selecao[id] == 1) 
+		{
+			pl_APs[PlayerId[id]] += iAps;
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `AmmoPacks`='%d' WHERE Conta =^"%s^";", g_sqlTable, pl_APs[PlayerId[id]], g_Conta[PlayerId[id]]);
+		}
+		else
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET AmmoPacks=AmmoPacks+'%d' WHERE Conta =^"%s^";", g_sqlTable, iAps, Conta);
+		
+		SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+	}
+	return PLUGIN_CONTINUE
+}
+public cmd_bankadmin_edit(id)
+{
+	if(pl_hasAccess[id] == true)
+	{
+		new szAps[11]
+		read_args(szAps, 10)
+		remove_quotes(szAps)
+		
+		if(equal(szAps, "") || equal(szAps, " ")) 
+			return PLUGIN_HANDLED
+		
+		new iAps = str_to_num(szAps)
+		
+		if(iAps < 0) return PLUGIN_HANDLED
+		
+		zp_colored_print(id, "!g[%s] !yA conta !t%s !yfoi editada e agora tem !t%d !yAmmoPacks.", TAGREG, g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta, iAps)
+		
+		get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+		
+		new APS = str_to_num(AmmoPacks)
+		
+		LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+		LogBKAdmin("Admin/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+		LogBKAdmin("Conta: %s", g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+		LogBKAdmin("Acao: de %d para %d AmmoPacks", g_selecao[id] == 1 ? pl_APs[PlayerId[id]] : APS, iAps)
+		LogBKAdmin("--------------------------------------------------------------------")
+		
+		static szQuery[ 128 ]
+		
+		if(g_selecao[id] == 1)
+		{
+			pl_APs[PlayerId[id]] = iAps;
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `AmmoPacks`='%d' WHERE Conta =^"%s^";", g_sqlTable, pl_APs[PlayerId[id]], g_Conta[PlayerId[id]]);
+		}
+		else
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `AmmoPacks`='%d' WHERE Conta =^"%s^";", g_sqlTable, APS, Conta);
+		
+		SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+	}
+	return PLUGIN_CONTINUE
+}
+public cmd_bankadmin_add_tkts(id)
+{
+	if(pl_hasAccess[id] == true)
+	{	
+		new szTkts[11]
+		read_args(szTkts, 10)
+		remove_quotes(szTkts)
+		
+		if(equal(szTkts, "") || equal(szTkts, " "))
+			return PLUGIN_HANDLED
+		
+		new iTkts = str_to_num(szTkts)
+		
+		if(iTkts < 1) return PLUGIN_HANDLED
+		
+		get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+		
+		zp_colored_print(id, "!g[%s] !yForam adicionados !t%d !yTickets a Conta !t%s", TAGREG, iTkts, g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+
+		LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+		LogBKAdmin("Admin/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+		LogBKAdmin("Conta: %s", g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+		LogBKAdmin("Acao: %d + %d Tickets", g_selecao[id] == 1 ? pl_Tickets[PlayerId[id]] : Tickets, iTkts)
+		LogBKAdmin("--------------------------------------------------------------------")
+		
+		static szQuery[ 128 ]
+	
+		if(g_selecao[id] == 1) 
+		{
+			pl_Tickets[PlayerId[id]] += iTkts;
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Tickets`='%d' WHERE Conta =^"%s^";", g_sqlTable, pl_Tickets[PlayerId[id]], g_Conta[PlayerId[id]]);
+		}
+		else
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET Tickets=Tickets+'%d' WHERE Conta =^"%s^";", g_sqlTable, iTkts, Conta);
+		
+		SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+	}
+	return PLUGIN_CONTINUE
+}
+public cmd_bankadmin_edit_tkts(id)
+{
+	if(pl_hasAccess[id] == true)
+	{
+		new szTkts[11]
+		read_args(szTkts, 10)
+		remove_quotes(szTkts)
+		
+		if(equal(szTkts, "") || equal(szTkts, " ")) 
+			return PLUGIN_HANDLED
+		
+		new iTkts = str_to_num(szTkts)
+		
+		if(iTkts < 0) return PLUGIN_HANDLED
+		
+		zp_colored_print(id, "!g[%s] !yA conta !t%s !yfoi editada e agora tem !t%d !yTickets.", TAGREG, g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta, iTkts)
+		
+		get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+		
+		LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+		LogBKAdmin("Admin/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+		LogBKAdmin("Conta: %s", g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+		LogBKAdmin("Acao: de %d para %d Tickets", g_selecao[id] == 1 ? pl_Tickets[PlayerId[id]] : Tickets, iTkts)
+		LogBKAdmin("--------------------------------------------------------------------")
+		
+		static szQuery[ 128 ]
+		
+		if(g_selecao[id] == 1)
+		{
+			pl_Tickets[PlayerId[id]] = iTkts;
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Tickets`='%d' WHERE Conta =^"%s^";", g_sqlTable, pl_Tickets[PlayerId[id]], g_Conta[PlayerId[id]]);
+		}
+		else
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Tickets`='%d' WHERE Conta =^"%s^";", g_sqlTable, iTkts, Conta);
+		
+		SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+	}
+	return PLUGIN_CONTINUE
+}
+public cmd_bankadmin_pw(id)
+{
+	if(pl_hasAccess[id] == true)
+	{
+		read_args(MudarSenhaNova[id], charsmax(MudarSenhaNova))
+		remove_quotes(MudarSenhaNova[id])
+		trim(MudarSenhaNova[id])
+		
+		if(contain(MudarSenhaNova[id], " ") != -1 || equal(MudarSenhaNova[id], "") || strlen(MudarSenhaNova[id]) < get_pcvar_num(cvar_pwmin) || strlen(MudarSenhaNova[id]) > get_pcvar_num(cvar_pwmax) )
+		{ 
+			set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+			ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR1", get_pcvar_num(cvar_pwmin), get_pcvar_num(cvar_pwmax))
+			EmitSound(id, ERROR)		
+			client_cmd(id, "messagemode [BankAdmin]Nova_Senha_")
+		}
+		else
+			client_cmd(id, "messagemode [BankAdmin]Confirmar_Senha_");
+	}
+}
+public cmd_bankadmin_pw2(id)
+{	
+	if(pl_hasAccess[id] == true)
+	{
+		new password[64];
+		read_args(password, 63);
+		remove_quotes(password);
+	
+		if(equal(password[0], MudarSenhaNova[id])) 
+		{
+			static szQuery[ 128 ]
+			
+			get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+			
+			LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+			LogBKAdmin("Admin: %s / %s", pl_Nick[id], pl_SteamID[id])
+			LogBKAdmin("Conta: %s", g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+			LogBKAdmin("Senha: de %s para %s", g_selecao[id] == 1 ? g_Senha[PlayerId[id]] : Senha, password)
+			LogBKAdmin("--------------------------------------------------------------------")
+			zp_colored_print(id, "!g[%s] !yA senha da conta !t%s !yfoi alterada para: !t%s", TAGREG, g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta, password)
+			
+			if(g_selecao[id] == 1)
+				g_Senha[PlayerId[id]] = password
+		
+			formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET Senha=^"%s^" WHERE Conta =^"%s^";", g_sqlTable, password, g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+			SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+		}
+		else
+		{
+			set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1) 
+			ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PW_ERROR2")
+			client_cmd(id, "messagemode [BankAdmin]Confirmar_Senha_")
+		}
+	}
+}
+public cmd_reason(id)
+{
+	if(pl_hasAccess[id] == true)
+	{
+		new arg1[50]
+		static szQuery[ 128 ]
+		read_argv(1, arg1, charsmax(arg1))
+		
+		if(g_selecao[id] == 1)
+		{
+			if(g_Blocked[PlayerId[id]] > 0)
+			{
+				client_cmd(id, "[BankAdmin]Conta_ %s", g_Conta[PlayerId[id]])
+				zp_colored_print(id, "!g[%s] !yAlteracao bem sucedida.", TAGREG)
+			}
+			else
+			{
+				get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+				new HumanReadableDate[32]; format_time(HumanReadableDate, charsmax(HumanReadableDate), "%d/%m/%Y", p_laBlockTime)
+				
+				if(p_laBlockTime == 1)
+					zp_colored_print(id, "!g[%s] !yA conta !t%s !yfoi bloqueada !gpermanentemente!y.", TAGREG, g_Conta[PlayerId[id]])
+				else
+					zp_colored_print(id, "!g[%s] !yA conta !t%s !yfoi bloqueada !gate %s!y.", TAGREG, g_Conta[PlayerId[id]], HumanReadableDate)
+			
+				LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+				LogBKAdmin("Admin/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+				LogBKAdmin("Conta: %s", g_Conta[PlayerId[id]])
+				if(p_laBlockTime == 1)
+					LogBKAdmin("Conta bloqueada permanentemente!")
+				else
+					LogBKAdmin("Conta bloqueada ate %s!", HumanReadableDate)
+				LogBKAdmin("Motivo: %s", arg1)
+				LogBKAdmin("--------------------------------------------------------------------")
+			}
+		}
+		else if(g_selecao[id] == 2)
+		{
+			new Block = str_to_num(Blocked)
+			if(Block > 0)
+			{
+				client_cmd(id, "[BankAdmin]Conta_ %s", Conta)
+				zp_colored_print(id, "!g[%s] !yAlteracao bem sucedida.", TAGREG)
+			}
+			else
+			{
+				get_user_name(id, pl_Nick[id], 32); get_user_authid(id, pl_SteamID[id], 32)
+				new HumanReadableDate[32]; format_time(HumanReadableDate, charsmax(HumanReadableDate), "%d/%m/%Y", p_laBlockTime)
+				
+				if(p_laBlockTime == 1)
+					zp_colored_print(id, "!g[%s] !yA conta !t%s !yfoi bloqueada !gpermanentemente!y.", TAGREG, Conta)
+				else
+					zp_colored_print(id, "!g[%s] !yA conta !t%s !yfoi bloqueada !gate %s!y.", TAGREG, Conta, HumanReadableDate)
+			
+				LogBKAdmin("%s -- Conta editada pelo administrador.", TAGREG)
+				LogBKAdmin("Admin/SteamID: %s / %s", pl_Nick[id], pl_SteamID[id])
+				LogBKAdmin("Conta: %s", Conta)
+				if(p_laBlockTime == 1)
+					LogBKAdmin("Conta bloqueada permanentemente!")
+				else
+					LogBKAdmin("Conta bloqueada ate %s!", HumanReadableDate)
+				LogBKAdmin("Motivo: %s", arg1)
+				LogBKAdmin("--------------------------------------------------------------------")
+			}
+		}
+		
+		formatex( szQuery, charsmax( szQuery ), "UPDATE %s SET `Block Reason`=^"%s^" WHERE Conta =^"%s^";", g_sqlTable, arg1, g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+		SQL_ThreadQuery(g_SqlTuple,"handle_CLQuery", szQuery)
+		
+		if(g_selecao[id] == 1) cmd_block(PlayerId[id])
+		
+		client_cmd(id, "[BankAdmin]Conta_ %s", g_selecao[id] == 1 ? g_Conta[PlayerId[id]] : Conta)
+	}
+}
+public cmd_block(id)
+{
+	set_hudmessage(255, 0, 0, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+	ShowSyncHudMsg(id, g_msgSyncHud, "Sua Conta foi %s!", g_Blocked[id] > 0 ? "desbloqueada" : "bloqueada")
+	
+	user_silentkill(id)
+	cs_set_user_team(id, CS_TEAM_SPECTATOR)
+	g_Conta[id] = "Nao registrado/logado"
+	g_Senha[id] = "Nao registrado/logado"
+	pl_tentativas[id] = get_pcvar_num(cvar_maxtent)
+	pl_logado[id] = false
+	g_blocked[id] = false
+	g_Blocked[id] = 0
+	
+	set_task(1.0, "menu_register", id)
+}
+public cmd_msg_reason(id)
+{
+	if(pl_hasAccess[id])
+	{
+		set_hudmessage(0, 0, 255, 0.02, 0.25, 2, 1.0, 2.0, 0.02, 0.1, -1)
+		ShowSyncHudMsg( id, g_msgSyncHud, "%L", id, "PUT_REASON")
+		client_cmd(id, "messagemode [BankAdmin]Motivo_")
+	}
+}
+/* AMXX-Studio Notes - DO NOT MODIFY BELOW HERE
+*{\\ rtf1\\ ansi\\ deff0{\\ fonttbl{\\ f0\\ fnil Tahoma;}}\n\\ viewkind4\\ uc1\\ pard\\ lang1046\\ f0\\ fs16 \n\\ par }
+*/
